@@ -11,6 +11,7 @@ include_directories(include)
 set(SOURCES
     src/main.cpp
     src/gps.cpp
+    src/accelerometer.cpp
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})
