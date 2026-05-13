@@ -60,12 +60,81 @@ bool GPS::initialise()
         fd = -1;
         return false;
     }
+
+    configureGPS();
+    
+    std::cout << "[GPS] Initialized successfully on " << GPS_I2C_BUS << " at address 0x" 
+              << std::hex << GPS_I2C_ADDRESS << std::dec << "\n";
     return true;
 }
  
 void GPS::close()
 {
     if (fd >= 0) { ::close(fd); fd = -1; }
+}
+
+bool GPS::sendUBX(const std::vector<uint8_t>& msg)
+{
+    if (fd < 0) return false;
+
+    ssize_t written = write(fd, msg.data(), msg.size());
+    if (written != (ssize_t)msg.size())
+    {
+        std::cerr << "[GPS] Failed to send UBX message\n";
+        return false;
+    }
+
+    // small delay to let GPS process it
+    usleep(100000); // 100ms
+    return true;
+}
+
+// Configures the GPS module by sending a series of UBX messages to set the
+// update rate and required sentence types.
+bool GPS::configureGPS()
+{   
+    // Sets update rate to 10hz
+    sendUBX({
+        0xB5,0x62,0x06,0x08,0x06,0x00,
+        0x64,0x00,
+        0x01,0x00,
+        0x01,0x00,
+        0x7A,0x12
+    });
+
+    // Disables gll
+    sendUBX({
+        0xB5,0x62,0x06,0x01,0x08,0x00,
+        0xF0,0x01,
+        0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x2A
+    });
+
+    // Disables gsa
+    sendUBX({
+        0xB5,0x62,0x06,0x01,0x08,0x00,
+        0xF0,0x02,
+        0x00,0x00,0x00,0x00,0x00,0x00,
+        0x01,0x31
+    });
+
+    // Disables gsv
+    sendUBX({
+        0xB5,0x62,0x06,0x01,0x08,0x00,
+        0xF0,0x03,
+        0x00,0x00,0x00,0x00,0x00,0x00,
+        0x02,0x38
+    });
+
+    // Disables vtg
+    sendUBX({
+        0xB5,0x62,0x06,0x01,0x08,0x00,
+        0xF0,0x05,
+        0x00,0x00,0x00,0x00,0x00,0x00,
+        0x04,0x46
+    });
+
+    return true;
 }
  
 // Reads one NMEA line from the GPS module byte-by-byte over I2C.
@@ -83,7 +152,7 @@ bool GPS::readLine(std::string& line)
         uint8_t byte = 0;
         if (::read(fd, &byte, 1) != 1)
         {
-            initialise(); // mirrors Python's `except IOError: connectBus()`
+            initialise();
             return false;
         }
  
@@ -103,7 +172,7 @@ bool GPS::readLine(std::string& line)
  
 // Validates checksum and parses a GPRMC/GNRMC sentence into gpsData.
 // Only populates the four fields we care about: validFix, latitude,
-// longitude, speed. All five of Python's parseResponse() checks are kept.
+// longitude, speed.
 bool GPS::parseNMEA(const std::string& line, GPSData& gpsData)
 {
     // Check #1: '$' must appear exactly once
@@ -146,7 +215,7 @@ bool GPS::parseNMEA(const std::string& line, GPSData& gpsData)
     gpsData.validFix  = (fields[2] == "A");
     gpsData.latitude  = nmeaToDecimalDegrees(fields[3], fields[4]);
     gpsData.longitude = nmeaToDecimalDegrees(fields[5], fields[6]);
-    gpsData.speed     = fields[7].empty() ? 0.0 : std::stod(fields[7]) * 1.852; // knots → km/h
+    gpsData.speed     = fields[7].empty() ? 0.0 : std::stod(fields[7]) * 1.852; // knots => km/h
  
     return true;
 }

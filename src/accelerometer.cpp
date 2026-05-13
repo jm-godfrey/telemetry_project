@@ -50,14 +50,14 @@ bool Accelerometer::initialise()
     }
 
     // Configure accelerometer:
-    // 104 Hz, ±8g, BW = 50 Hz (stable for now)
+    // 104 Hz, ±8g, BW = 50 Hz 
     if (!writeRegister(CTRL1_XL, 0b01001100))
     {
         std::cerr << "Failed to configure accelerometer\n";
         return false;
     }
 
-    // Enable auto-increment (important for multi-byte reads)
+    // Enable auto-increment for multi-byte reads
     if (!writeRegister(CTRL3_C, 0b01000100))
     {
         std::cerr << "Failed to configure CTRL3_C\n";
@@ -68,8 +68,6 @@ bool Accelerometer::initialise()
     return true;
 }
 
-
-// Read full accelerometer data
 AccelerometerData Accelerometer::readData()
 {
     AccelerometerData data{};
@@ -80,7 +78,7 @@ AccelerometerData Accelerometer::readData()
     int16_t rawY = readAxis(OUTY_L_XL);
     int16_t rawZ = readAxis(OUTZ_L_XL);
 
-    // Convert to g (±8g → 0.244 mg/LSB)
+    // Convert to g (±8g => 0.244 mg/LSB)
     const float scale = 0.000244f;
 
     data.accelX = rawX * scale;
@@ -91,7 +89,7 @@ AccelerometerData Accelerometer::readData()
 }
 
 
-// Write a register
+// Write to a register for configuration
 bool Accelerometer::writeRegister(uint8_t reg, uint8_t value)
 {
     uint8_t buffer[2] = {reg, value};
@@ -123,7 +121,7 @@ uint8_t Accelerometer::readRegister(uint8_t reg)
 }
 
 
-// Read one axis (2 bytes → 16-bit signed)
+// Read one axis (2 bytes = 16-bit signed)
 int16_t Accelerometer::readAxis(uint8_t lowReg)
 {
     uint8_t buffer[2];
@@ -145,7 +143,7 @@ int16_t Accelerometer::readAxis(uint8_t lowReg)
 }
 
 
-// Close I2C
+// Close I2C connection
 void Accelerometer::close()
 {
     if (fd >= 0)
