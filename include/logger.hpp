@@ -13,7 +13,7 @@ public:
     Logger();
     ~Logger();
 
-    bool openLogFile(const std::string& filename);
+    bool openLogFile();
 
     // Logs a telemetry data entry to the file, including a timestamp
     void logData(const TelemetryData& data);
@@ -22,5 +22,8 @@ public:
 
 private:
 
+    std::string generateFilename();
+
     std::ofstream logFile;
+    std::mutex logMutex;
 };

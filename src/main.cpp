@@ -1,5 +1,7 @@
 #include "../include/gps.hpp"
 #include "../include/accelerometer.hpp"
+#include "../include/logger.hpp"
+#include "../include/telemetry_data.hpp"
 
 #include <iostream>
 #include <vector>
@@ -19,10 +21,14 @@ int main()
     gps.initialise();
     accel.initialise();
 
+    Logger logger;
+    logger.openLogFile();
+
     int count = 0;
 
     while (true)
-    {
+    {   
+
         GPSData data = gps.readData();
 
         //cout << "GPS Fix: " << (data.validFix ? "Yes" : "No") << endl;
@@ -44,6 +50,16 @@ int main()
             cout << "Accel Z: " << accelData.accelZ << " g" << endl;
 
             cout << "=============================\n";
+
+            TelemetryData telemetry;
+            
+            telemetry.timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()
+            ).count();
+            telemetry.gps = data;
+            telemetry.accelerometer = accelData;
+
+            logger.logData(telemetry);
 
         }
 

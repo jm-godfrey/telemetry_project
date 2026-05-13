@@ -12,6 +12,7 @@ set(SOURCES
     src/main.cpp
     src/gps.cpp
     src/accelerometer.cpp
+    src/logger.cpp
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})
