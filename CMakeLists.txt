@@ -13,6 +13,9 @@ set(SOURCES
     src/gps.cpp
     src/accelerometer.cpp
     src/logger.cpp
+    src/threads/gps_thread.cpp
+    src/threads/imu_thread.cpp
+    src/threads/logger_thread.cpp
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})
