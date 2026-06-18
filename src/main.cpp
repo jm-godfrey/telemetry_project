@@ -13,12 +13,27 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <csignal>
 
 using namespace std;
+
+// Shutdown flag, shared with the worker threads and written by the signal
+// handler. File-scope so the handler can reach it. atomic<bool> is one of the
+// few things a signal handler is allowed to touch safely.
+static std::atomic<bool> running(true);
+
+// SIGINT (Ctrl-C) / SIGTERM handler: only flips the flag, nothing else.
+static void handleSignal(int)
+{
+    running = false;
+}
 
 int main()
 {
     cout << "Hello, Telemetry!" << endl;
+
+    std::signal(SIGINT, handleSignal);
+    std::signal(SIGTERM, handleSignal);
 
     GPS gps;
     Accelerometer accel;
@@ -38,7 +53,6 @@ int main()
 
     TelemetryData sharedData;
     std::mutex dataMutex;
-    std::atomic<bool> running(true);
 
     // Create threads
     std::thread imuThread(imuThreadFunc,
@@ -59,19 +73,23 @@ int main()
                              std::ref(dataMutex),
                              std::ref(running));
 
-    // Keep main alive
-    while (true)
+    // Keep main alive until a shutdown signal flips `running`.
+    while (running)
     {
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 
-    running = false;
+    cout << "\nShutting down, stopping threads...\n";
 
+    // Threads check `running` at the top of each loop and exit; join() waits
+    // for them to actually finish their current iteration.
     imuThread.join();
     gpsThread.join();
     loggerThread.join();
 
     logger.closeLogFile();
+
+    cout << "Shutdown complete.\n";
 
     return 0;
 }

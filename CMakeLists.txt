@@ -20,6 +20,10 @@ set(SOURCES
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 
+# std::thread/std::mutex require the system threads (pthreads) library on Linux.
+find_package(Threads REQUIRED)
+target_link_libraries(${PROJECT_NAME} PRIVATE Threads::Threads)
+
 # Optionally add include directories or libraries below.
 # target_include_directories(${PROJECT_NAME} PRIVATE include)
 # target_link_libraries(${PROJECT_NAME} PRIVATE some_library)
