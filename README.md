@@ -55,7 +55,7 @@ timestamp,lat,lon,speed,accelX,accelY,accelZ
 
 | Column      | Units                | Source / notes                                            |
 |-------------|----------------------|-----------------------------------------------------------|
-| `timestamp` | Unix ms (UTC epoch)  | Captured at log time by the logger thread                 |
+| `timestamp` | Unix ms (UTC epoch)  | UTC date + time from the GPS `RMC` sentence (the Pi has no reliable clock offline) |
 | `lat`       | decimal degrees      | From GPS `$GxRMC` sentence (negative = South)             |
 | `lon`       | decimal degrees      | From GPS `$GxRMC` sentence (negative = West)              |
 | `speed`     | km/h                 | GPS speed-over-ground, converted from knots (× 1.852)     |
@@ -63,7 +63,10 @@ timestamp,lat,lon,speed,accelX,accelY,accelZ
 | `accelY`    | g                    | LSM6DSL Y axis                                            |
 | `accelZ`    | g                    | LSM6DSL Z axis (≈ −1 g at rest, depending on orientation) |
 
-Rows are written at **~10 Hz** (about 10 samples per second).
+Rows are written at **~10 Hz** (about 10 samples per second). Logging does **not**
+begin until the GPS has its first valid fix, since the timestamp is taken from the
+GPS (see [Timestamps](#timestamps) below). Any accelerometer data captured before
+that first fix is not logged.
 
 ---
 
@@ -98,16 +101,32 @@ between threads, protected by a mutex.
 |-----------------------|---------|-----------------------------------------------------------------------------|
 | `imuThreadFunc`       | ~100 Hz | Read the accelerometer and write the latest values into `sharedData`.       |
 | `gpsThreadFunc`       | ~10 Hz  | Read/parse an NMEA line; on a *valid fix*, write GPS values into `sharedData`. |
-| `loggerThreadFunc`    | ~10 Hz  | Copy a snapshot of `sharedData`, stamp it with the current time, write a CSV row, and print a debug summary. |
+| `loggerThreadFunc`    | ~10 Hz  | Copy a snapshot of `sharedData`; once a valid GPS fix is available, stamp the row with the GPS UTC time, write a CSV row, and print a debug summary. Skips logging until the first fix. |
 
 Each thread paces itself with `std::this_thread::sleep_until(start + interval)` so the loop
 period stays stable regardless of how long the work took. Access to the shared struct is
 serialised with a `std::lock_guard<std::mutex>`, and an `std::atomic<bool> running` flag is
 the shutdown signal.
 
-The logger thread is the producer of timestamps: it reads whatever the GPS and IMU threads
-have most recently published, so each CSV row reflects the freshest sensor state at the moment
-of logging.
+The logger thread reads whatever the GPS and IMU threads have most recently published, so
+each CSV row reflects the freshest sensor state. The **timestamp** for each row comes from the
+GPS, not from the logger — see [Timestamps](#timestamps) below.
+
+### Timestamps
+
+The Raspberry Pi 5 has no battery-backed real-time clock, and in a vehicle it has no internet
+connection, so NTP never syncs and the system clock cannot be trusted. Instead of
+`std::chrono::system_clock`, each CSV row is timestamped from the **UTC time and date carried
+in the GPS `RMC` sentence**, converted to Unix epoch milliseconds (via `timegm`, so it is true
+UTC regardless of the Pi's timezone).
+
+Consequences of this approach:
+
+- **Nothing is logged until the first valid GPS fix** — the logger thread skips a row whenever
+  there is no valid fix or no parsed GPS time.
+- Because the logger (~10 Hz) and the GPS (~10 Hz) are not phase-locked, consecutive rows can
+  occasionally share a timestamp, and during a fix loss (e.g. a tunnel) the last fix's time
+  persists until a fresh fix arrives.
 
 ### GPS details
 
@@ -127,6 +146,9 @@ validates it:
   checksum** over the characters between `$` and `*`.
 - Only `$GPRMC` / `$GNRMC` sentences are parsed. NMEA `ddmm.mmmm` coordinates are converted
   to decimal degrees, and speed is converted from knots to km/h.
+- The RMC **UTC time** (`hhmmss.ss`) and **date** (`ddmmyy`) fields are also parsed and combined
+  into Unix epoch milliseconds, which becomes the timestamp for each logged row (see
+  [Timestamps](#timestamps)).
 
 ### Accelerometer details
 
@@ -214,12 +236,13 @@ This produces the `telemetry_project` executable inside `build/`.
 
 ## Run
 
-The logger writes to `../data/logs/` **relative to the working directory**, so run it from
-inside the `build/` directory (where the path resolves to `telemetry_project/data/logs/`):
+The logger writes to an **absolute** path,
+`/home/jgodfrey/telemetry_project/data/logs/`, and creates that directory if it does not
+already exist. Because the path no longer depends on the working directory, the executable can
+be launched from anywhere — including a `systemd` unit at startup:
 
 ```bash
-cd build
-./telemetry_project
+./build/telemetry_project
 ```
 
 On startup you should see the sensors initialise and the log file path printed:
@@ -228,7 +251,7 @@ On startup you should see the sensors initialise and the log file path printed:
 Hello, Telemetry!
 [GPS] Initialized successfully on /dev/i2c-1 at address 0x42
 Accelerometer initialised
-[Logger] Logging to: ../data/logs/telemetry_log_20260618_142600.csv
+[Logger] Logging to: /home/jgodfrey/telemetry_project/data/logs/telemetry_log_20260618_142600.csv
 ```
 
 The console then prints a live summary of each logged data point. The CSV file grows in
@@ -245,9 +268,11 @@ log file cleanly before exiting.
 
 These are honest observations from the current state of the code, useful to anyone extending it:
 
-- **`data/logs/` must exist** before running — the logger opens the file but does not create
-  the directory. It is already present in the repo.
-- **GPS-only data is gated on a valid fix.** Until the receiver gets a fix, `lat`/`lon`/`speed`
-  stay at their defaults while accelerometer data still logs.
+- **The log path is hard-coded** to `/home/jgodfrey/telemetry_project/data/logs/` in
+  `src/logger.cpp`. The logger creates the directory automatically on startup, so it no longer
+  needs to exist in advance — but if you move the project you must update that path.
+- **Logging is gated on a valid GPS fix.** Because the timestamp is GPS-sourced, nothing is
+  written to the CSV until the receiver gets its first fix; accelerometer data captured during
+  the warm-up is not logged.
 - **No external library dependencies** beyond the C++ standard library and the Linux I²C
   kernel interface (`<linux/i2c-dev.h>`), keeping the build self-contained.
