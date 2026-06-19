@@ -50,9 +50,7 @@ bool Logger::openLogFile() {
 
     std::string fullPath = logDir + filename;
 
-    // Open a raw file descriptor so we can fdatasync() to the SD card — the
-    // vehicle can cut power abruptly, and std::ofstream gives no access to the
-    // fd that fdatasync() needs.
+    // creates full fd because need it for fdatasync()
     fd = ::open(fullPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0)
     {
@@ -75,7 +73,7 @@ bool Logger::openLogFile() {
 void Logger::closeLogFile() {
     if (fd >= 0)
     {
-        ::fdatasync(fd); // make sure the final rows are on the card
+        ::fdatasync(fd);
         ::close(fd);
         fd = -1;
     }
@@ -100,9 +98,7 @@ void Logger::logData(const TelemetryData& data) {
     if (::write(fd, line.data(), line.size()) < 0)
         std::cerr << "[Logger] Write failed: " << std::strerror(errno) << "\n";
 
-    // Force buffered data onto the SD card at most once per second, so an
-    // abrupt power-off loses at most ~1 second of rows without thrashing the
-    // card with an fdatasync on every write.
+    // forces buffered data onto the SD card with fdatasync()
     const auto now = std::chrono::steady_clock::now();
     if (now - lastSync >= std::chrono::seconds(1))
     {
