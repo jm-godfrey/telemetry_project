@@ -1,7 +1,6 @@
 #pragma once
 
 #include <string>
-#include <fstream>
 #include <mutex>
 #include <chrono>
 #include "telemetry_data.hpp"
@@ -24,6 +23,7 @@ private:
 
     std::string generateFilename();
 
-    std::ofstream logFile;
+    int fd = -1;                                    // raw file descriptor (fsync needs this)
+    std::chrono::steady_clock::time_point lastSync; // last time we forced data to the card
     std::mutex logMutex;
 };

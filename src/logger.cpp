@@ -5,6 +5,10 @@
 #include <ctime>
 #include <iostream>
 #include <filesystem>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cstring>
+#include <cerrno>
 
 Logger::Logger() {}
 
@@ -45,30 +49,45 @@ bool Logger::openLogFile() {
     }
 
     std::string fullPath = logDir + filename;
-    logFile.open(fullPath);
 
-    if (!logFile.is_open())
+    // Open a raw file descriptor so we can fdatasync() to the SD card — the
+    // vehicle can cut power abruptly, and std::ofstream gives no access to the
+    // fd that fdatasync() needs.
+    fd = ::open(fullPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0)
+    {
+        std::cerr << "[Logger] Failed to open log file '" << fullPath
+                  << "': " << std::strerror(errno) << "\n";
         return false;
-    
+    }
+
     std::cout << "[Logger] Logging to: " << fullPath << "\n";
 
     // CSV header
-    logFile << "timestamp,lat,lon,speed,accelX,accelY,accelZ\n";
+    const char* header = "timestamp,lat,lon,speed,accelX,accelY,accelZ\n";
+    ::write(fd, header, std::strlen(header));
+
+    lastSync = std::chrono::steady_clock::now();
 
     return true;
 }
 
 void Logger::closeLogFile() {
-    if (logFile.is_open())
-        logFile.close();
+    if (fd >= 0)
+    {
+        ::fdatasync(fd); // make sure the final rows are on the card
+        ::close(fd);
+        fd = -1;
+    }
 }
 
 void Logger::logData(const TelemetryData& data) {
-    if (!logFile.is_open()) return;
+    if (fd < 0) return;
 
     std::lock_guard<std::mutex> lock(logMutex);
 
-    logFile 
+    std::ostringstream row;
+    row
         << data.timestampMs << ","
         << data.gps.latitude << ","
         << data.gps.longitude << ","
@@ -76,4 +95,18 @@ void Logger::logData(const TelemetryData& data) {
         << data.accelerometer.accelX << ","
         << data.accelerometer.accelY << ","
         << data.accelerometer.accelZ << "\n";
+
+    const std::string line = row.str();
+    if (::write(fd, line.data(), line.size()) < 0)
+        std::cerr << "[Logger] Write failed: " << std::strerror(errno) << "\n";
+
+    // Force buffered data onto the SD card at most once per second, so an
+    // abrupt power-off loses at most ~1 second of rows without thrashing the
+    // card with an fdatasync on every write.
+    const auto now = std::chrono::steady_clock::now();
+    if (now - lastSync >= std::chrono::seconds(1))
+    {
+        ::fdatasync(fd);
+        lastSync = now;
+    }
 }
