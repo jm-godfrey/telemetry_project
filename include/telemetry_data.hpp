@@ -9,6 +9,7 @@ struct GPSData
     double longitude = 0.0;
     double speed = 0.0;
     bool validFix = false;
+    uint64_t timeMs = 0; // UTC epoch ms parsed from the RMC sentence (0 = none)
 };
 
 struct AccelerometerData

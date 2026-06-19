@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <cstring>
 #include <cstdlib>
+#include <ctime>
 #include <sstream>
 #include <vector>
 #include <iostream>
@@ -27,6 +28,46 @@ static std::vector<std::string> splitString(const std::string& s, char delim)
     return tokens;
 }
  
+// Builds Unix epoch milliseconds (UTC) from an RMC time field (hhmmss.ss) and
+// date field (ddmmyy). Returns 0 if either field is empty or malformed.
+// Uses timegm() so the tm is interpreted as UTC — NOT mktime(), which would
+// wrongly apply the Pi's local timezone.
+static uint64_t nmeaToEpochMs(const std::string& timeStr,
+                              const std::string& dateStr)
+{
+    if (timeStr.size() < 6 || dateStr.size() < 6) return 0;
+
+    std::tm tm{};
+    try
+    {
+        tm.tm_mday = std::stoi(dateStr.substr(0, 2));
+        tm.tm_mon  = std::stoi(dateStr.substr(2, 2)) - 1;     // 0-based month
+        tm.tm_year = std::stoi(dateStr.substr(4, 2)) + 100;   // 20yy => years since 1900
+        tm.tm_hour = std::stoi(timeStr.substr(0, 2));
+        tm.tm_min  = std::stoi(timeStr.substr(2, 2));
+        tm.tm_sec  = std::stoi(timeStr.substr(4, 2));
+    }
+    catch (...)
+    {
+        return 0;
+    }
+
+    const time_t secs = timegm(&tm);
+    if (secs == static_cast<time_t>(-1)) return 0;
+
+    // Fractional seconds after the '.', normalised to milliseconds.
+    uint64_t fracMs = 0;
+    const size_t dot = timeStr.find('.');
+    if (dot != std::string::npos)
+    {
+        std::string frac = timeStr.substr(dot + 1);
+        frac.resize(3, '0');                 // pad/truncate to exactly 3 digits
+        fracMs = static_cast<uint64_t>(std::strtol(frac.c_str(), nullptr, 10));
+    }
+
+    return static_cast<uint64_t>(secs) * 1000 + fracMs;
+}
+
 // Converts NMEA ddmm.mmmm / dddmm.mmmm + direction to decimal degrees.
 static double nmeaToDecimalDegrees(const std::string& coord,
                                    const std::string& dir)
@@ -212,11 +253,15 @@ bool GPS::parseNMEA(const std::string& line, GPSData& gpsData)
     const std::string& msgType = fields[0];
     if (msgType != "$GPRMC" && msgType != "$GNRMC") return false;
 
+    // Need at least up to the date field (index 9) to derive a timestamp.
+    if (fields.size() < 10) return false;
+
     gpsData.validFix  = (fields[2] == "A");
     gpsData.latitude  = nmeaToDecimalDegrees(fields[3], fields[4]);
     gpsData.longitude = nmeaToDecimalDegrees(fields[5], fields[6]);
     gpsData.speed     = fields[7].empty() ? 0.0 : std::stod(fields[7]) * 1.852; // knots => km/h
- 
+    gpsData.timeMs    = nmeaToEpochMs(fields[1], fields[9]); // UTC time + date => epoch ms
+
     return true;
 }
  

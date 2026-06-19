@@ -4,6 +4,7 @@
 #include <sstream>
 #include <ctime>
 #include <iostream>
+#include <filesystem>
 
 Logger::Logger() {}
 
@@ -31,7 +32,21 @@ std::string Logger::generateFilename() {
 bool Logger::openLogFile() {
     std::string filename = generateFilename();
 
-    std::string fullPath = "../data/logs/" + filename;
+    const std::string logDir = "/home/jgodfrey/telemetry_project/data/logs/";
+
+    // Create the log directory (and any missing parents) if it doesn't exist
+    // yet, so the logger works on a fresh system / under systemd without the
+    // path being set up in advance.
+    std::error_code ec;
+    std::filesystem::create_directories(logDir, ec);
+    if (ec)
+    {
+        std::cerr << "[Logger] Failed to create log directory '" << logDir
+                  << "': " << ec.message() << "\n";
+        return false;
+    }
+
+    std::string fullPath = logDir + filename;
     logFile.open(fullPath);
 
     if (!logFile.is_open())

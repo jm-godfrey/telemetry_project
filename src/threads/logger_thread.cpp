@@ -19,9 +19,15 @@ void loggerThreadFunc(Logger& logger,
             copy = sharedData;
         }
 
-        copy.timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()
-        ).count();
+        // Timestamps come from the GPS (the Pi has no reliable clock offline).
+        // Skip logging entirely until we have a valid fix with a parsed time.
+        if (!copy.gps.validFix || copy.gps.timeMs == 0)
+        {
+            std::this_thread::sleep_until(start + std::chrono::milliseconds(100));
+            continue;
+        }
+
+        copy.timestampMs = copy.gps.timeMs;
 
         logger.logData(copy);
 
