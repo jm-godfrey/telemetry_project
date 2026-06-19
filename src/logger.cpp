@@ -32,11 +32,9 @@ std::string Logger::generateFilename() {
 bool Logger::openLogFile() {
     std::string filename = generateFilename();
 
-    const std::string logDir = "/home/jgodfrey/telemetry_project/data/logs/";
+    const std::string logDir = "/home/jmgodfrey/Documents/Vscode/telemetry_project/data/logs/";
 
-    // Create the log directory (and any missing parents) if it doesn't exist
-    // yet, so the logger works on a fresh system / under systemd without the
-    // path being set up in advance.
+    // Create the log directory if it doesn't exist yet
     std::error_code ec;
     std::filesystem::create_directories(logDir, ec);
     if (ec)
