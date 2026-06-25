@@ -23,7 +23,7 @@ private:
 
     std::string generateFilename();
 
-    int fd = -1;                                    // raw file descriptor (fsync needs this)
-    std::chrono::steady_clock::time_point lastSync; // last time we forced data to the card
+    int fd = -1;         
+    std::chrono::steady_clock::time_point lastSync;
     std::mutex logMutex;
 };

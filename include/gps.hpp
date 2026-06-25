@@ -14,7 +14,6 @@ public:
     bool initialise();
 
     // Gets the latest GPS data, returns a GPSData struct with the current values.
-    // If no valid fix is available, validFix will be false.
     GPSData readData();
 
     void close();

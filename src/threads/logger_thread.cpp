@@ -19,7 +19,7 @@ void loggerThreadFunc(Logger& logger,
             copy = sharedData;
         }
 
-        // Timestamps come from the GPS (the Pi has no reliable clock offline).
+        // Timestamps come from the GPS due to pi being offline
         // Skip logging entirely until we have a valid fix with a parsed time.
         if (!copy.gps.validFix || copy.gps.timeMs == 0)
         {

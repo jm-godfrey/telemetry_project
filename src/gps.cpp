@@ -16,7 +16,7 @@
 static constexpr int  GPS_I2C_ADDRESS = 0x42;
 static constexpr char GPS_I2C_BUS[]   = "/dev/i2c-1";
  
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// helpers
  
 static std::vector<std::string> splitString(const std::string& s, char delim)
 {
@@ -29,9 +29,8 @@ static std::vector<std::string> splitString(const std::string& s, char delim)
 }
  
 // Builds Unix epoch milliseconds (UTC) from an RMC time field (hhmmss.ss) and
-// date field (ddmmyy). Returns 0 if either field is empty or malformed.
-// Uses timegm() so the tm is interpreted as UTC — NOT mktime(), which would
-// wrongly apply the Pi's local timezone.
+// date field (ddmmyy). Returns 0 if either field is empty or bad.
+// Uses timegm() so the tm is interpreted as UTC
 static uint64_t nmeaToEpochMs(const std::string& timeStr,
                               const std::string& dateStr)
 {
@@ -41,8 +40,8 @@ static uint64_t nmeaToEpochMs(const std::string& timeStr,
     try
     {
         tm.tm_mday = std::stoi(dateStr.substr(0, 2));
-        tm.tm_mon  = std::stoi(dateStr.substr(2, 2)) - 1;     // 0-based month
-        tm.tm_year = std::stoi(dateStr.substr(4, 2)) + 100;   // 20yy => years since 1900
+        tm.tm_mon  = std::stoi(dateStr.substr(2, 2)) - 1;
+        tm.tm_year = std::stoi(dateStr.substr(4, 2)) + 100;
         tm.tm_hour = std::stoi(timeStr.substr(0, 2));
         tm.tm_min  = std::stoi(timeStr.substr(2, 2));
         tm.tm_sec  = std::stoi(timeStr.substr(4, 2));
@@ -55,13 +54,13 @@ static uint64_t nmeaToEpochMs(const std::string& timeStr,
     const time_t secs = timegm(&tm);
     if (secs == static_cast<time_t>(-1)) return 0;
 
-    // Fractional seconds after the '.', normalised to milliseconds.
+    // Fractional seconds after '.', normalised to milliseconds.
     uint64_t fracMs = 0;
     const size_t dot = timeStr.find('.');
     if (dot != std::string::npos)
     {
         std::string frac = timeStr.substr(dot + 1);
-        frac.resize(3, '0');                 // pad/truncate to exactly 3 digits
+        frac.resize(3, '0');
         fracMs = static_cast<uint64_t>(std::strtol(frac.c_str(), nullptr, 10));
     }
 
@@ -81,7 +80,7 @@ static double nmeaToDecimalDegrees(const std::string& coord,
     return decimal;
 }
  
-// ── GPS class ────────────────────────────────────────────────────────────────
+// gps class
  
 GPS::GPS() : fd(-1) {}
 GPS::~GPS() { close(); }
@@ -125,8 +124,8 @@ bool GPS::sendUBX(const std::vector<uint8_t>& msg)
         return false;
     }
 
-    // small delay to let GPS process it
-    usleep(100000); // 100ms
+    // small delay to let GPS process
+    usleep(100000);
     return true;
 }
 
@@ -179,11 +178,6 @@ bool GPS::configureGPS()
 }
  
 // Reads one NMEA line from the GPS module byte-by-byte over I2C.
-// Mirrors Python's readGPS() accumulation loop + parseResponse() Check #3:
-//   - 0xFF        → no data available, return false
-//   - 0x0A        → end of line, return true
-//   - bad ASCII   → discard the ENTIRE line (return false), matching Python's
-//                   CharError check which drops any line with a single bad byte
 bool GPS::readLine(std::string& line)
 {
     line.clear();
@@ -201,7 +195,7 @@ bool GPS::readLine(std::string& line)
         if (byte == 0x0A)  break;          // c == 10:  end of line
         if (byte == 0x0D)  continue;       // carriage return: skip
  
-        // Check #3: if ANY byte is outside readable ASCII, discard whole line
+        // if any byte is outside readable ASCII, discards whole line
         if (byte < 32 || byte > 122)
             return false;
  
@@ -212,29 +206,24 @@ bool GPS::readLine(std::string& line)
 }
  
 // Validates checksum and parses a GPRMC/GNRMC sentence into gpsData.
-// Only populates the four fields we care about: validFix, latitude,
-// longitude, speed.
+// Populates validFix, latitude, longitude, speed, heading, and timeMs.
 bool GPS::parseNMEA(const std::string& line, GPSData& gpsData)
 {
-    // Check #1: '$' must appear exactly once
+    // $ must appear once
     if (std::count(line.begin(), line.end(), '$') != 1) return false;
  
-    // Check #2: max NMEA sentence length is 83 chars
+    // max length = 83
     if (line.length() >= 83) return false;
  
-    // Check #3 is already enforced in readLine() — bad chars never reach here
- 
-    // Check #4: skip txbuf allocation errors
     if (line.find("txbuf") != std::string::npos) return false;
  
-    // Check #5: split on '*' to isolate checksum
+    // splits checksum from sentence
     const size_t starPos = line.find('*');
     if (starPos == std::string::npos) return false;
  
     const std::string sentence  = line.substr(0, starPos);
     const std::string chkSumStr = line.substr(starPos + 1);
  
-    // XOR checksum over all chars between '$' and '*' (skip '$' at index 0)
     uint8_t calcChk = 0;
     for (size_t i = 1; i < sentence.size(); ++i)
         calcChk ^= static_cast<uint8_t>(sentence[i]);
@@ -244,8 +233,7 @@ bool GPS::parseNMEA(const std::string& line, GPSData& gpsData)
  
     if (calcChk != providedChk) return false;
  
-    // Parse GPRMC / GNRMC — the only sentence type that carries all four
-    // fields we need: validFix, latitude, longitude, speed.
+    // Parse GPRMC / GNRMC sentences only
     // Fields: type, time, status, lat, N/S, lon, E/W, speed(knots), course, date
     const std::vector<std::string> fields = splitString(sentence, ',');
     if (fields.size() < 8) return false;
@@ -253,13 +241,13 @@ bool GPS::parseNMEA(const std::string& line, GPSData& gpsData)
     const std::string& msgType = fields[0];
     if (msgType != "$GPRMC" && msgType != "$GNRMC") return false;
 
-    // Need at least up to the date field (index 9) to derive a timestamp.
     if (fields.size() < 10) return false;
 
     gpsData.validFix  = (fields[2] == "A");
     gpsData.latitude  = nmeaToDecimalDegrees(fields[3], fields[4]);
     gpsData.longitude = nmeaToDecimalDegrees(fields[5], fields[6]);
     gpsData.speed     = fields[7].empty() ? 0.0 : std::stod(fields[7]) * 1.852; // knots => km/h
+    gpsData.heading   = fields[8].empty() ? 0.0 : std::stod(fields[8]); // course over ground, deg true
     gpsData.timeMs    = nmeaToEpochMs(fields[1], fields[9]); // UTC time + date => epoch ms
 
     return true;

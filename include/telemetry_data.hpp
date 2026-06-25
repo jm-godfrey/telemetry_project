@@ -8,6 +8,7 @@ struct GPSData
     double latitude = 0.0;
     double longitude = 0.0;
     double speed = 0.0;
+    double heading = 0.0; // course over ground, degrees true (0 = North), from RMC
     bool validFix = false;
     uint64_t timeMs = 0; // UTC epoch ms parsed from the RMC sentence (0 = none)
 };

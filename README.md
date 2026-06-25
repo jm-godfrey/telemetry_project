@@ -237,9 +237,7 @@ This produces the `telemetry_project` executable inside `build/`.
 ## Run
 
 The logger writes to an **absolute** path,
-`/home/jgodfrey/telemetry_project/data/logs/`, and creates that directory if it does not
-already exist. Because the path no longer depends on the working directory, the executable can
-be launched from anywhere — including a `systemd` unit at startup:
+`/home/jmgodfrey/Documents/Vscode/telemetry_project/data/logs/`, and creates that directory if it does not already exist. Because the path no longer depends on the working directory, the executable can be launched from anywhere — including a `systemd` unit at startup:
 
 ```bash
 ./build/telemetry_project

@@ -17,12 +17,10 @@
 
 using namespace std;
 
-// Shutdown flag, shared with the worker threads and written by the signal
-// handler. File-scope so the handler can reach it. atomic<bool> is one of the
-// few things a signal handler is allowed to touch safely.
+// Shutdown flag for threads to check
 static std::atomic<bool> running(true);
 
-// SIGINT (Ctrl-C) / SIGTERM handler: only flips the flag, nothing else.
+// SIGINT (Ctrl-C)
 static void handleSignal(int)
 {
     running = false;
@@ -73,7 +71,7 @@ int main()
                              std::ref(dataMutex),
                              std::ref(running));
 
-    // Keep main alive until a shutdown signal flips `running`.
+    // Keep main alive until running is set to false (Ctrl-C)
     while (running)
     {
         std::this_thread::sleep_for(std::chrono::seconds(1));
