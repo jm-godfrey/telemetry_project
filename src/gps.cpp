@@ -15,6 +15,7 @@
  
 static constexpr int  GPS_I2C_ADDRESS = 0x42;
 static constexpr char GPS_I2C_BUS[]   = "/dev/i2c-1";
+static constexpr double KNOTS_TO_KMH = 1.15078; // 1 knot = 1.15078 km/h
  
 // helpers
  
@@ -246,7 +247,7 @@ bool GPS::parseNMEA(const std::string& line, GPSData& gpsData)
     gpsData.validFix  = (fields[2] == "A");
     gpsData.latitude  = nmeaToDecimalDegrees(fields[3], fields[4]);
     gpsData.longitude = nmeaToDecimalDegrees(fields[5], fields[6]);
-    gpsData.speed     = fields[7].empty() ? 0.0 : std::stod(fields[7]) * 1.852; // knots => km/h
+    gpsData.speed     = fields[7].empty() ? 0.0 : std::stod(fields[7]) * KNOTS_TO_KMH;
     gpsData.heading   = fields[8].empty() ? 0.0 : std::stod(fields[8]); // course over ground, deg true
     gpsData.timeMs    = nmeaToEpochMs(fields[1], fields[9]); // UTC time + date => epoch ms
 
