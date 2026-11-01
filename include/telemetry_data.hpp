@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 
 // few simple structs to hold the currently supported telemetry data types, to be extended as needed
@@ -11,6 +12,7 @@ struct GPSData
     double heading = 0.0; // course over ground, degrees true (0 = North), from RMC
     bool validFix = false;
     uint64_t timeMs = 0; // UTC epoch ms parsed from the RMC sentence (0 = none)
+    std::chrono::steady_clock::time_point rxTime{}; // when the Pi received this fix
 };
 
 struct AccelerometerData

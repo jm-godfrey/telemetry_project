@@ -103,7 +103,8 @@ bool GPS::initialise()
     }
 
     configureGPS();
-    
+    flushBacklog();
+
     std::cout << "[GPS] Initialized successfully on " << GPS_I2C_BUS << " at address 0x" 
               << std::hex << GPS_I2C_ADDRESS << std::dec << "\n";
     return true;
@@ -143,6 +144,14 @@ bool GPS::configureGPS()
         0x7A,0x12
     });
 
+    // Disables gga
+    sendUBX({
+        0xB5,0x62,0x06,0x01,0x08,0x00,
+        0xF0,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,
+        0xFF,0x23
+    });
+
     // Disables gll
     sendUBX({
         0xB5,0x62,0x06,0x01,0x08,0x00,
@@ -178,32 +187,45 @@ bool GPS::configureGPS()
     return true;
 }
  
+void GPS::flushBacklog()
+{
+    uint8_t byte = 0;
+    while (::read(fd, &byte, 1) == 1 && byte != 0xFF) {}
+    lineBuf.clear();
+}
+
 // Reads one NMEA line from the GPS module byte-by-byte over I2C.
+// Returns false when no complete line is waiting, keeping any partial line.
 bool GPS::readLine(std::string& line)
 {
-    line.clear();
- 
     while (true)
     {
         uint8_t byte = 0;
         if (::read(fd, &byte, 1) != 1)
         {
+            close();
             initialise();
             return false;
         }
- 
+
         if (byte == 0xFF)  return false;   // c == 255: no data
-        if (byte == 0x0A)  break;          // c == 10:  end of line
         if (byte == 0x0D)  continue;       // carriage return: skip
- 
+        if (byte == 0x0A)                  // c == 10:  end of line
+        {
+            line = lineBuf;
+            lineBuf.clear();
+            return !line.empty();
+        }
+
         // if any byte is outside readable ASCII, discards whole line
         if (byte < 32 || byte > 122)
+        {
+            lineBuf.clear();
             return false;
- 
-        line += static_cast<char>(byte);
+        }
+
+        lineBuf += static_cast<char>(byte);
     }
- 
-    return !line.empty();
 }
  
 // Validates checksum and parses a GPRMC/GNRMC sentence into gpsData.
@@ -256,15 +278,23 @@ bool GPS::parseNMEA(const std::string& line, GPSData& gpsData)
  
 GPSData GPS::readData()
 {
-    GPSData data{};
-    data.validFix = false;
- 
+    GPSData latest{};
+
     if (fd >= 0)
     {
+        // Must read everything waiting: falling behind the module fills its
+        // buffer and leaves every fix ~9.5 s old
         std::string line;
-        if (readLine(line))
-            parseNMEA(line, data);
+        while (readLine(line))
+        {
+            GPSData parsed{};
+            if (parseNMEA(line, parsed) && parsed.validFix)
+            {
+                parsed.rxTime = std::chrono::steady_clock::now();
+                latest = parsed;
+            }
+        }
     }
- 
-    return data;
+
+    return latest;
 }
