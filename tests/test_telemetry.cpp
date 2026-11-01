@@ -1,4 +1,4 @@
-// Hardware-free checks for the GPS line handling. Not part of the CMake build.
+// Hardware-free checks for the GPS line handling and IMU averaging. Not part of the CMake build.
 // g++ -std=c++17 -Iinclude tests/test_telemetry.cpp src/gps.cpp -o /tmp/test_telemetry && /tmp/test_telemetry
 
 #include <cassert>
@@ -78,8 +78,37 @@ static void testGps()
     ::close(p[1]);
 }
 
+static void testImuAverage()
+{
+    ImuAverage avg;
+
+    // Nothing sampled yet
+    assert(avg.take().accelZ == 0.0f);
+
+    AccelerometerData a, b;
+    a.accelZ = 1.0f;
+    a.gyroX = 10.0f;
+    b.accelZ = 3.0f;
+    b.gyroX = -30.0f;
+    avg.add(a);
+    avg.add(b);
+
+    AccelerometerData mean = avg.take();
+    assert(mean.accelZ == 2.0f);
+    assert(mean.gyroX == -10.0f);
+
+    // A row with no good samples repeats the previous mean
+    mean = avg.take();
+    assert(mean.accelZ == 2.0f);
+
+    // The old total doesn't leak into the next row
+    avg.add(a);
+    assert(avg.take().accelZ == 1.0f);
+}
+
 int main()
 {
     testGps();
+    testImuAverage();
     std::puts("All telemetry tests passed");
 }

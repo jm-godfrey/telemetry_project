@@ -9,11 +9,12 @@ void imuThreadFunc(Accelerometer& accel,
     {
         auto start = std::chrono::steady_clock::now();
 
-        AccelerometerData accelData = accel.readData();
+        AccelerometerData accelData;
 
+        if (accel.readData(accelData))
         {
             std::lock_guard<std::mutex> lock(dataMutex);
-            sharedData.accelerometer = accelData;
+            sharedData.imuAverage.add(accelData);
         }
 
         std::this_thread::sleep_until(start + std::chrono::milliseconds(10)); // 100 Hz

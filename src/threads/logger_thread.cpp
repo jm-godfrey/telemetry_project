@@ -7,6 +7,7 @@ void loggerThreadFunc(Logger& logger,
                       std::atomic<bool>& running)
 {
     int count = 0;
+    std::chrono::steady_clock::time_point sessionStart;
 
     while (running)
     {
@@ -17,6 +18,7 @@ void loggerThreadFunc(Logger& logger,
         {
             std::lock_guard<std::mutex> lock(dataMutex);
             copy = sharedData;
+            copy.accelerometer = sharedData.imuAverage.take();
         }
 
         // Timestamps come from the GPS due to pi being offline
@@ -28,6 +30,12 @@ void loggerThreadFunc(Logger& logger,
         }
 
         copy.timestampMs = copy.gps.timeMs;
+
+        // Pi's own clock, so these can't repeat or jump like GPS time
+        const auto now = std::chrono::steady_clock::now();
+        if (count == 0) sessionStart = now;
+        copy.tMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - sessionStart).count();
+        copy.fixAgeMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - copy.gps.rxTime).count();
 
         logger.logData(copy);
 

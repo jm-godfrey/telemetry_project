@@ -49,8 +49,8 @@ data/logs/telemetry_log_YYYYMMDD_HHMMSS.csv
 The file begins with a header row, followed by one row per logged sample:
 
 ```csv
-timestamp,lat,lon,speed,accelX,accelY,accelZ
-1718719200123,53.480100,-2.242600,42.318,0.012,-0.984,0.027
+timestamp,lat,lon,speed,heading,accelX,accelY,accelZ,gyroX,gyroY,gyroZ,t_ms,fix_age_ms
+1718719200100,53.4801000,-2.2426000,42.31800,271.40,0.012000,-0.984000,0.027000,1.225,-0.350,4.760,12300,48
 ```
 
 | Column      | Units                | Source / notes                                            |
@@ -59,9 +59,18 @@ timestamp,lat,lon,speed,accelX,accelY,accelZ
 | `lat`       | decimal degrees      | From GPS `$GxRMC` sentence (negative = South)             |
 | `lon`       | decimal degrees      | From GPS `$GxRMC` sentence (negative = West)              |
 | `speed`     | km/h                 | GPS speed-over-ground, converted from knots (× 1.852)     |
-| `accelX`    | g                    | LSM6DSL X axis                                            |
-| `accelY`    | g                    | LSM6DSL Y axis                                            |
-| `accelZ`    | g                    | LSM6DSL Z axis (≈ −1 g at rest, depending on orientation) |
+| `heading`   | degrees              | GPS course over ground, clockwise from true north         |
+| `accelX`    | g                    | LSM6DSL X axis, averaged over the row                     |
+| `accelY`    | g                    | LSM6DSL Y axis, averaged over the row                     |
+| `accelZ`    | g                    | LSM6DSL Z axis, averaged over the row                     |
+| `gyroX`     | °/s                  | LSM6DSL X axis, averaged over the row                     |
+| `gyroY`     | °/s                  | LSM6DSL Y axis, averaged over the row                     |
+| `gyroZ`     | °/s                  | LSM6DSL Z axis, averaged over the row                     |
+| `t_ms`      | ms                   | Time since the first logged row, from the Pi's own clock  |
+| `fix_age_ms`| ms                   | Time since the Pi received the GPS fix on this row        |
+
+Accelerometer and gyro values are in the sensor's own orientation, with no mounting
+rotation applied.
 
 Rows are written at **~10 Hz** (about 10 samples per second). Logging does **not**
 begin until the GPS has its first valid fix, since the timestamp is taken from the
@@ -81,7 +90,7 @@ between threads, protected by a mutex.
 ```
             ┌────────────────────┐
    I²C ───► │  GPS (0x42)        │ ──► gpsThreadFunc  ─┐
-            └────────────────────┘     (~10 Hz)        │   writes gps fields
+            └────────────────────┘     (~50 Hz poll)   │   writes gps fields
                                                        ▼
             ┌────────────────────┐              ┌──────────────────┐
    I²C ───► │  Accelerometer     │ ──► imuThread │  TelemetryData   │  (shared,
@@ -99,17 +108,17 @@ between threads, protected by a mutex.
 
 | Thread                | Rate    | Responsibility                                                              |
 |-----------------------|---------|-----------------------------------------------------------------------------|
-| `imuThreadFunc`       | ~100 Hz | Read the accelerometer and write the latest values into `sharedData`.       |
-| `gpsThreadFunc`       | ~10 Hz  | Read/parse an NMEA line; on a *valid fix*, write GPS values into `sharedData`. |
-| `loggerThreadFunc`    | ~10 Hz  | Copy a snapshot of `sharedData`; once a valid GPS fix is available, stamp the row with the GPS UTC time, write a CSV row, and print a debug summary. Skips logging until the first fix. |
+| `imuThreadFunc`       | ~100 Hz | Read the accelerometer and gyro, adding each sample to the running average in `sharedData`. |
+| `gpsThreadFunc`       | ~50 Hz  | Read and parse every waiting NMEA line; on a *valid fix*, write the newest GPS values into `sharedData`. |
+| `loggerThreadFunc`    | ~10 Hz  | Copy a snapshot of `sharedData` and take the IMU average; once a valid GPS fix is available, stamp the row with the GPS UTC time, write a CSV row, and print a debug summary. Skips logging until the first fix. |
 
 Each thread paces itself with `std::this_thread::sleep_until(start + interval)` so the loop
 period stays stable regardless of how long the work took. Access to the shared struct is
 serialised with a `std::lock_guard<std::mutex>`, and an `std::atomic<bool> running` flag is
 the shutdown signal.
 
-The logger thread reads whatever the GPS and IMU threads have most recently published, so
-each CSV row reflects the freshest sensor state. The **timestamp** for each row comes from the
+Each CSV row holds the newest GPS fix plus the average of the IMU samples since the previous
+row. The **timestamp** for each row comes from the
 GPS, not from the logger — see [Timestamps](#timestamps) below.
 
 ### Timestamps
@@ -126,7 +135,9 @@ Consequences of this approach:
   there is no valid fix or no parsed GPS time.
 - Because the logger (~10 Hz) and the GPS (~10 Hz) are not phase-locked, consecutive rows can
   occasionally share a timestamp, and during a fix loss (e.g. a tunnel) the last fix's time
-  persists until a fresh fix arrives.
+  persists until a fresh fix arrives. `fix_age_ms` climbs while this happens.
+- The receiver can correct its clock early in a session, stepping `timestamp` back by 1 s. Use
+  `t_ms` for anything that needs time to always move forward.
 
 ### GPS details
 
@@ -134,14 +145,19 @@ The u-blox module has no flash memory, so it is reconfigured on every startup
 (`configureGPS()`) by sending raw **UBX** binary commands over I²C:
 
 - Set the navigation/measurement rate to **10 Hz**.
-- Disable the `GLL`, `GSA`, `GSV`, and `VTG` NMEA sentences to reduce bus traffic, leaving
+- Disable the `GGA`, `GLL`, `GSA`, `GSV`, and `VTG` NMEA sentences to reduce bus traffic, leaving
   the `RMC` sentence that carries position, speed, and fix status.
 
-Reading (`readData → readLine → parseNMEA`) accumulates one NMEA line byte-by-byte and then
-validates it:
+Anything already queued on the module is thrown away at startup. After that, every pass reads
+all the waiting lines, because reading slower than the module sends fills its buffer and leaves
+every fix several seconds old.
 
-- `0xFF` means "no data available", `0x0A` ends a line, `0x0D` is skipped, and any byte
-  outside printable ASCII causes the whole line to be discarded.
+Reading (`readData → readLine → parseNMEA`) accumulates NMEA lines byte-by-byte and then
+validates them:
+
+- `0xFF` means "no data available" (a partial line is kept for the next pass), `0x0A` ends a
+  line, `0x0D` is skipped, and any byte outside printable ASCII causes the whole line to be
+  discarded.
 - A valid line must contain exactly one `$`, be under 83 characters, and pass an **XOR
   checksum** over the characters between `$` and `*`.
 - Only `$GPRMC` / `$GNRMC` sentences are parsed. NMEA `ddmm.mmmm` coordinates are converted
@@ -150,15 +166,20 @@ validates it:
   into Unix epoch milliseconds, which becomes the timestamp for each logged row (see
   [Timestamps](#timestamps)).
 
-### Accelerometer details
+### Accelerometer and gyro details
 
 The **LSM6DSL** is configured over I²C in `initialise()`:
 
-- `CTRL1_XL = 0b01001100` → output data rate **104 Hz**, full scale **±8 g**, 50 Hz bandwidth.
+- `CTRL1_XL = 0b01101100` → accelerometer output data rate **416 Hz**, full scale **±8 g**.
+- `CTRL2_G = 0b01101000` → gyro output data rate **416 Hz**, full scale **±1000 °/s**.
 - `CTRL3_C = 0b01000100` → enable register auto-increment for multi-byte reads (BDU set).
+- `CTRL4_C = 0b00000010` and `CTRL6_C = 0b00000011` → gyro low-pass filter at its strongest setting.
+- `CTRL8_XL = 0b11001000` → accelerometer low-pass filter at ODR/9 (~46 Hz).
 
-Each axis is read as two bytes (low + high) combined into a signed 16-bit value, then scaled
-by **0.000244 g/LSB** (the ±8 g sensitivity) to produce values in g.
+All six axes are read in one 12-byte burst, each as two bytes (low + high) combined into a
+signed 16-bit value. Accelerometer values are scaled by **0.000244 g/LSB** and gyro values by
+**0.035 °/s per LSB**. Failed reads are skipped, and each CSV row holds the mean of the samples
+since the previous row.
 
 ---
 
@@ -185,6 +206,8 @@ telemetry_project/
 │       ├── gps_thread.cpp
 │       ├── imu_thread.cpp
 │       └── logger_thread.cpp
+├── tests/
+│   └── test_telemetry.cpp      # Hardware-free checks, build command in the file
 └── data/
     └── logs/                   # CSV output files are written here
 ```

@@ -62,7 +62,7 @@ bool Logger::openLogFile() {
     std::cout << "[Logger] Logging to: " << fullPath << "\n";
 
     // CSV header
-    const char* header = "timestamp,lat,lon,speed,heading,accelX,accelY,accelZ\n";
+    const char* header = "timestamp,lat,lon,speed,heading,accelX,accelY,accelZ,gyroX,gyroY,gyroZ,t_ms,fix_age_ms\n";
     ::write(fd, header, std::strlen(header));
 
     lastSync = std::chrono::steady_clock::now();
@@ -87,7 +87,8 @@ void Logger::logData(const TelemetryData& data) {
     //   lat/lon: 7 dp  (~1.1 cm)
     //   speed:   5 dp  (km/h)
     //   heading: 2 dp  (degrees true)
-    //   accel:   6 dp  
+    //   accel:   6 dp
+    //   gyro:    3 dp  (deg/s)
     std::ostringstream row;
     row << std::fixed
         << data.timestampMs << ","
@@ -97,7 +98,12 @@ void Logger::logData(const TelemetryData& data) {
         << std::setprecision(2) << data.gps.heading   << ","
         << std::setprecision(6) << data.accelerometer.accelX << ","
         << std::setprecision(6) << data.accelerometer.accelY << ","
-        << std::setprecision(6) << data.accelerometer.accelZ << "\n";
+        << std::setprecision(6) << data.accelerometer.accelZ << ","
+        << std::setprecision(3) << data.accelerometer.gyroX  << ","
+        << std::setprecision(3) << data.accelerometer.gyroY  << ","
+        << std::setprecision(3) << data.accelerometer.gyroZ  << ","
+        << data.tMs << ","
+        << data.fixAgeMs << "\n";
 
     const std::string line = row.str();
     if (::write(fd, line.data(), line.size()) < 0)
