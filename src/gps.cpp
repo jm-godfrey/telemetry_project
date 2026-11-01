@@ -15,7 +15,7 @@
  
 static constexpr int  GPS_I2C_ADDRESS = 0x42;
 static constexpr char GPS_I2C_BUS[]   = "/dev/i2c-1";
-static constexpr double KNOTS_TO_KMH = 1.15078; // 1 knot = 1.15078 km/h
+static constexpr double KNOTS_TO_KMH = 1.852; // 1 knot = 1.852 km/h
  
 // helpers
  
